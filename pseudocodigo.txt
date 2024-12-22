@@ -1,0 +1,105 @@
+Início
+
+#!/bin/bash
+
+# Define input/output paths
+RAW_DATA_DIR="./ficheiros_Amostra_A"
+REFERENCE_GENOME="hg19.fa.gz"
+REFERENCE_GENOME_URL="ftp://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz"
+PROCESSED_DIR="./processed_data"
+INPUT_BAM="processed_data\AMOSTRA_A.bam"
+DEDUP_BAM="processed_data\no_duplicate_A.bam"
+VCF_OUTPUT="variants.vcf"
+FILTERED_VCF="filtered_variants.vcf"
+ANNOTATED_VCF="annotated_variants.vcf"
+
+# Ensure directories exist
+mkdir -p $PROCESSED_DIR
+
+# Step 1: Download Raw Data
+echo "Step 1: Downloading raw data..."
+cp -r $RAW_DATA_DIR/* $PROCESSED_DIR/
+echo "Raw data copied to $PROCESSED_DIR."
+
+echo "Downloading reference genome hg19..."
+if [ ! -f $REFERENCE_GENOME ]; then
+  wget $REFERENCE_GENOME_URL
+  echo "Reference genome $REFERENCE_GENOME downloaded."
+else
+  echo "$REFERENCE_GENOME already exists, skipping download."
+fi
+
+# Step 2: Preprocessing
+
+echo "Removing duplicates..."
+samtools markdup -r $INPUT_BAM $DEDUP_BAM || { echo "Duplicate removal failed!"; exit 1; }
+echo "Deduplicated BAM file saved to: $DEDUP_BAM"
+
+echo "Indexing deduplicated BAM file..."
+samtools index $DEDUP_BAM || { echo "Indexing failed!"; exit 1; }
+echo "Index created for: $DEDUP_BAM"
+a<
+echo "Preprocessing completed successfully!"
+
+# Step 3: Mapping Against Human Genome
+echo "Step 3: Mapping against the human genome..."
+gunzip -k $REFERENCE_GENOME
+REFERENCE_GENOME_FILE="${REFERENCE_GENOME%.gz}"
+BAM_FILE=$(find $PROCESSED_DIR -name "*.bam")
+if [[ ! -z "$BAM_FILE" ]]; then
+  bwa index $REFERENCE_GENOME_FILE
+  bwa mem $REFERENCE_GENOME_FILE $BAM_FILE > "${BAM_FILE%.bam}.mapped.bam"
+  echo "Mapping completed: ${BAM_FILE%.bam}.mapped.bam"
+else
+  echo "BAM file not found!"
+  exit 1
+fi
+
+# Step 4: Conversion SAM to BAM
+echo "Step 4: Converting SAM to BAM..."
+MAPPED_BAM="${BAM_FILE%.bam}.mapped.bam"
+samtools view -S -b $MAPPED_BAM > "${MAPPED_BAM%.mapped.bam}.converted.bam"
+echo "SAM converted to BAM: ${MAPPED_BAM%.mapped.bam}.converted.bam"
+
+# Step 5: Variant Calling
+echo "Step 5: Identifying variants..."
+bcftools mpileup -Ou -f $REFERENCE_GENOME_FILE "${MAPPED_BAM%.mapped.bam}.converted.bam" | \
+  bcftools call -mv -Ov -o $VCF_OUTPUT
+echo "Variant calling completed: $VCF_OUTPUT"
+
+# Step 6: Filtering Variants by Quality
+echo "Step 6: Filtering variants by quality..."
+bcftools filter -i 'QUAL>=20' -Ov -o $FILTERED_VCF $VCF_OUTPUT
+echo "Variants filtered: $FILTERED_VCF"
+
+# Step 7: Variant Annotation using bcftools
+echo "Step 7: Annotating variants with bcftools..."
+ANNOTATION_DB="dbsnp_138.hg19.vcf.gz"  
+bcftools annotate -a $ANNOTATION_DB -c ID -o $ANNOTATED_VCF -O v $FILTERED_VCF
+echo "Variants annotated: $ANNOTATED_VCF"
+
+# Step 8: Calculate Metrics
+echo "Step 8: Calculating metrics from the VCF file..."
+
+TOTAL_VARIANTS=$(bcftools view -H $ANNOTATED_VCF | wc -l)
+echo "Total Variants Identified: $TOTAL_VARIANTS"
+
+echo "Calculating Variants Identified Per Gene..."
+bcftools query -f '%INFO/ANN\n' $ANNOTATED_VCF | \
+    grep -oP '\|[^|]*\|[^|]*\|[^|]*\|' | \
+    awk -F'|' '{if($4 != "") print $4}' | \
+    sort | uniq -c | sort -nr > gene_variants.txt
+
+
+echo "Variants Identified Per Gene:"
+cat gene_variants.txt | while read count gene; do
+    echo "  $gene: $count"
+done
+
+echo "Metrics calculated and saved."
+
+# Final Message
+echo "Pipeline completed successfully!"
+
+
+Fim
