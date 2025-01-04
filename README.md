@@ -44,8 +44,8 @@ Passo 8:
 Post analysis:
 - Análise de padrões de heterozigosidade
 - Análise com variable de pathogenicity
-- Anláside das pathways principais
-- ANálise de níveis de expressão
+- Análise das pathways principais
+- Análise de níveis de expressão
 
 
 Variante c.244C>T
